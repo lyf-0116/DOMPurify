@@ -1232,6 +1232,60 @@ function createDOMPurify() {
 	let SANITIZE_DOM = true;
 	let SANITIZE_NAMED_PROPS = false;
 	const SANITIZE_NAMED_PROPS_PREFIX = "user-content-";
+	const NAMED_PROPS_SINGLE_REFERENCE_ATTRS = addToSet({}, [
+		"aria-activedescendant",
+		"aria-details",
+		"aria-errormessage",
+		"commandfor",
+		"form",
+		"list",
+		"popovertarget"
+	]);
+	const NAMED_PROPS_LIST_REFERENCE_ATTRS = addToSet({}, [
+		"aria-controls",
+		"aria-describedby",
+		"aria-flowto",
+		"aria-labelledby",
+		"aria-owns",
+		"for",
+		"headers",
+		"itemref"
+	]);
+	const NAMED_PROPS_FRAGMENT_REFERENCE_ATTRS = addToSet({}, [
+		"href",
+		"usemap",
+		"xlink:href"
+	]);
+	/**
+	* Prefix one named-property reference value, unless it already carries the
+	* isolation prefix.
+	*
+	* @param value the reference value to isolate
+	* @return the isolated value
+	*/
+	const _prefixNamedPropReference = function _prefixNamedPropReference(value) {
+		return value && stringIndexOf(value, SANITIZE_NAMED_PROPS_PREFIX) !== 0 ? SANITIZE_NAMED_PROPS_PREFIX + value : value;
+	};
+	/**
+	* Prefix every token of a space-separated IDREF list, preserving the exact
+	* whitespace between tokens.
+	*
+	* @param value the space-separated reference list
+	* @return the isolated list
+	*/
+	const _prefixNamedPropReferenceList = function _prefixNamedPropReferenceList(value) {
+		return stringReplace(value, /[^\t\n\f\r ]+/g, (token) => _prefixNamedPropReference(token));
+	};
+	/**
+	* Prefix the fragment part of a hash reference. Only the part from the
+	* first `#` onward names a target; any path before it is left alone.
+	*
+	* @param value the reference value, e.g. `page.html#target`
+	* @return the isolated reference
+	*/
+	const _prefixNamedPropFragment = function _prefixNamedPropFragment(value) {
+		return stringReplace(value, /#([\s\S]*)$/, (match, fragment) => fragment ? "#" + _prefixNamedPropReference(fragment) : match);
+	};
 	let KEEP_CONTENT = true;
 	let IN_PLACE = false;
 	let IN_PLACE_VISITED = null;
@@ -2333,19 +2387,25 @@ function createDOMPurify() {
 			if (!attr) continue;
 			const name = attr.name, namespaceURI = attr.namespaceURI, attrValue = attr.value;
 			const lcName = transformCaseFunc(name);
+			const normalizedName = SANITIZE_NAMED_PROPS ? stringToLowerCase(lcName) : lcName;
 			const initValue = attrValue;
 			let value = name === "value" ? initValue : stringTrim(initValue);
-			let recreatedNamedProp = false;
+			let recreatedAttribute = false;
 			hookEvent.attrName = lcName;
 			hookEvent.attrValue = value;
 			hookEvent.keepAttr = true;
 			hookEvent.forceKeepAttr = void 0;
 			_executeHooks(hooks.uponSanitizeAttribute, currentNode, hookEvent);
 			value = hookEvent.attrValue;
-			if (SANITIZE_NAMED_PROPS && (lcName === "id" || lcName === "name") && stringIndexOf(value, SANITIZE_NAMED_PROPS_PREFIX) !== 0) {
+			if (SANITIZE_NAMED_PROPS && (normalizedName === "id" || normalizedName === "name") && stringIndexOf(value, SANITIZE_NAMED_PROPS_PREFIX) !== 0) {
 				_removeAttribute(name, currentNode, attr);
 				value = SANITIZE_NAMED_PROPS_PREFIX + value;
-				recreatedNamedProp = true;
+				recreatedAttribute = true;
+			}
+			if (SANITIZE_NAMED_PROPS) {
+				if (NAMED_PROPS_SINGLE_REFERENCE_ATTRS[normalizedName]) value = _prefixNamedPropReference(value);
+				else if (NAMED_PROPS_LIST_REFERENCE_ATTRS[normalizedName]) value = _prefixNamedPropReferenceList(value);
+				else if (NAMED_PROPS_FRAGMENT_REFERENCE_ATTRS[normalizedName]) value = _prefixNamedPropFragment(value);
 			}
 			if (_isUnsafeAttributeValue(name, value)) {
 				_removeAttribute(name, currentNode, attr);
@@ -2367,7 +2427,11 @@ function createDOMPurify() {
 			}
 			value = _applyTrustedTypesToAttribute(lcTag, lcName, namespaceURI, value);
 			if (value !== initValue) {
-				if (_setAttributeValue(currentNode, name, namespaceURI, value) && recreatedNamedProp) arrayPop(DOMPurify.removed);
+				if (SANITIZE_NAMED_PROPS && !recreatedAttribute && namespaceURI === null && name !== normalizedName) {
+					_removeAttribute(name, currentNode, attr);
+					recreatedAttribute = true;
+				}
+				if (_setAttributeValue(currentNode, name, namespaceURI, value) && recreatedAttribute) arrayPop(DOMPurify.removed);
 			}
 		}
 		_executeHooks(hooks.afterSanitizeAttributes, currentNode, null);

@@ -558,6 +558,78 @@ function createDOMPurify(window: WindowLike = getGlobal()): DOMPurify {
   let SANITIZE_NAMED_PROPS = false;
   const SANITIZE_NAMED_PROPS_PREFIX = 'user-content-';
 
+  /* Attributes whose values reference named properties. Namespace isolation
+     must move them into the same prefixed namespace as `id`/`name`, or the
+     references point at nothing (and can be used to reach an isolated name
+     from an allowed reference attribute). Keys are lower-case; lookup below
+     normalizes the parsed attribute name so XHTML case is handled too. */
+  const NAMED_PROPS_SINGLE_REFERENCE_ATTRS = addToSet({}, [
+    'aria-activedescendant',
+    'aria-details',
+    'aria-errormessage',
+    'commandfor',
+    'form',
+    'list',
+    'popovertarget',
+  ]);
+  const NAMED_PROPS_LIST_REFERENCE_ATTRS = addToSet({}, [
+    'aria-controls',
+    'aria-describedby',
+    'aria-flowto',
+    'aria-labelledby',
+    'aria-owns',
+    'for',
+    'headers',
+    'itemref',
+  ]);
+  const NAMED_PROPS_FRAGMENT_REFERENCE_ATTRS = addToSet({}, [
+    'href',
+    'usemap',
+    'xlink:href',
+  ]);
+
+  /**
+   * Prefix one named-property reference value, unless it already carries the
+   * isolation prefix.
+   *
+   * @param value the reference value to isolate
+   * @return the isolated value
+   */
+  const _prefixNamedPropReference = function (value: string): string {
+    return value && stringIndexOf(value, SANITIZE_NAMED_PROPS_PREFIX) !== 0
+      ? SANITIZE_NAMED_PROPS_PREFIX + value
+      : value;
+  };
+
+  /**
+   * Prefix every token of a space-separated IDREF list, preserving the exact
+   * whitespace between tokens.
+   *
+   * @param value the space-separated reference list
+   * @return the isolated list
+   */
+  const _prefixNamedPropReferenceList = function (value: string): string {
+    return stringReplace(value, /[^\t\n\f\r ]+/g, (token: string): string =>
+      _prefixNamedPropReference(token)
+    );
+  };
+
+  /**
+   * Prefix the fragment part of a hash reference. Only the part from the
+   * first `#` onward names a target; any path before it is left alone.
+   *
+   * @param value the reference value, e.g. `page.html#target`
+   * @return the isolated reference
+   */
+  const _prefixNamedPropFragment = function (value: string): string {
+    return stringReplace(
+      value,
+      /#([\s\S]*)$/,
+      (match: string, fragment: string): string =>
+        fragment ? '#' + _prefixNamedPropReference(fragment) : match
+    );
+  };
+
   /* Keep element content when removing element? */
   let KEEP_CONTENT = true;
 
@@ -2668,6 +2740,9 @@ function createDOMPurify(window: WindowLike = getGlobal()): DOMPurify {
 
       const { name, namespaceURI, value: attrValue } = attr;
       const lcName = transformCaseFunc(name);
+      const normalizedName = SANITIZE_NAMED_PROPS
+        ? stringToLowerCase(lcName)
+        : lcName;
 
       const initValue = attrValue;
       let value = name === 'value' ? initValue : stringTrim(initValue);
@@ -2676,7 +2751,7 @@ function createDOMPurify(window: WindowLike = getGlobal()): DOMPurify {
          write-back below takes off again. Only the SANITIZE_NAMED_PROPS
          remove-and-recreate does; any other write-back must not pop, or it
          would drop an unrelated removal record. */
-      let recreatedNamedProp = false;
+      let recreatedAttribute = false;
 
       /* Execute a hook if present */
       hookEvent.attrName = lcName;
@@ -2691,7 +2766,7 @@ function createDOMPurify(window: WindowLike = getGlobal()): DOMPurify {
        */
       if (
         SANITIZE_NAMED_PROPS &&
-        (lcName === 'id' || lcName === 'name') &&
+        (normalizedName === 'id' || normalizedName === 'name') &&
         stringIndexOf(value, SANITIZE_NAMED_PROPS_PREFIX) !== 0
       ) {
         // Remove the attribute with this value
@@ -2700,9 +2775,23 @@ function createDOMPurify(window: WindowLike = getGlobal()): DOMPurify {
         value = SANITIZE_NAMED_PROPS_PREFIX + value;
         // This attribute owns the record just pushed; its recreate writeback
         // is the one allowed to pop it back off.
-        recreatedNamedProp = true;
+        recreatedAttribute = true;
       }
       // Else: already prefixed, and the prefix is the protection
+
+      /* Move references into the isolated namespace as well. Doing this
+         unconditionally is what keeps an allowed reference attribute from
+         reaching a non-isolated name; a mapping built from this tree only
+         would not cover targets outside it. */
+      if (SANITIZE_NAMED_PROPS) {
+        if (NAMED_PROPS_SINGLE_REFERENCE_ATTRS[normalizedName]) {
+          value = _prefixNamedPropReference(value);
+        } else if (NAMED_PROPS_LIST_REFERENCE_ATTRS[normalizedName]) {
+          value = _prefixNamedPropReferenceList(value);
+        } else if (NAMED_PROPS_FRAGMENT_REFERENCE_ATTRS[normalizedName]) {
+          value = _prefixNamedPropFragment(value);
+        }
+      }
 
       /* Value checks that apply regardless of hooks (comment / raw-text
          closers in the value, animated hrefs); see _isUnsafeAttributeValue. */
@@ -2747,6 +2836,21 @@ function createDOMPurify(window: WindowLike = getGlobal()): DOMPurify {
 
       /* Handle invalid data-* attribute set by try-catching it */
       if (value !== initValue) {
+        /* A case-preserved attribute name is not addressable by
+           setAttribute() in an HTML document (it is ASCII-lowercased), so
+           writing the value back would leave the original, unmodified
+           attribute in place and add a second one. Remove the exact Attr
+           node first, as the id/name path does. */
+        if (
+          SANITIZE_NAMED_PROPS &&
+          !recreatedAttribute &&
+          namespaceURI === null &&
+          name !== normalizedName
+        ) {
+          _removeAttribute(name, currentNode, attr);
+          recreatedAttribute = true;
+        }
+
         const cleanWrite = _setAttributeValue(
           currentNode,
           name,
@@ -2754,7 +2858,7 @@ function createDOMPurify(window: WindowLike = getGlobal()): DOMPurify {
           value
         );
 
-        if (cleanWrite && recreatedNamedProp) {
+        if (cleanWrite && recreatedAttribute) {
           arrayPop(DOMPurify.removed);
         }
       }

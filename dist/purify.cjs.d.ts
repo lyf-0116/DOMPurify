@@ -170,7 +170,9 @@ interface Config {
   /**
    * Enforce strict DOM Clobbering protection via namespace isolation (default is false).
    * When enabled, isolates the namespace of named properties (i.e., `id` and `name` attributes)
-   * from JS variables by prefixing them with the string `user-content-`
+   * from JS variables by prefixing them with the string `user-content-`. References to
+   * those names (`for`, `aria-*`, `list`, `headers`, `usemap`, and `href` fragments) are
+   * prefixed as well so their targets stay connected.
    */
   SANITIZE_NAMED_PROPS?: boolean | undefined;
   /**

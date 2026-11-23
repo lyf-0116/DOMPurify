@@ -447,7 +447,9 @@ const clean = DOMPurify.sanitize(dirty, { SANITIZE_DOM: false });
 
 // enforce strict DOM Clobbering protection via namespace isolation (default is false)
 // when enabled, isolates the namespace of named properties (i.e., `id` and `name` attributes)
-// from JS variables by prefixing them with the string `user-content-`
+// from JS variables by prefixing them with the string `user-content-`; references to
+// those names (`for`, `aria-*`, `list`, `headers`, `usemap`, and `href` fragments) follow
+// the same prefix so their targets stay connected
 const clean = DOMPurify.sanitize(dirty, { SANITIZE_NAMED_PROPS: true });
 
 // keep an element's content when the element is removed (default is true)

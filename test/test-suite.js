@@ -1750,7 +1750,8 @@
     QUnit.test(
       'a nested sanitize() call keeps a persistent setConfig() intact',
       (assert) => {
-        const dirty = '<b title="t">a</b><i>b</i><a href="https://x.test/">c</a>';
+        const dirty =
+          '<b title="t">a</b><i>b</i><a href="https://x.test/">c</a>';
         DOMPurify.setConfig({ ALLOWED_TAGS: ['b'], ALLOWED_ATTR: ['title'] });
         try {
           const expected = DOMPurify.sanitize(dirty);
@@ -1799,7 +1800,8 @@
     QUnit.test(
       'a nested sanitize() call from a config callback does not change the outer call',
       (assert) => {
-        const dirty = '<foo-bar>a</foo-bar><i>b</i><a href="https://x.test/">c</a>';
+        const dirty =
+          '<foo-bar>a</foo-bar><i>b</i><a href="https://x.test/">c</a>';
         const outer = (tagNameCheck) => ({
           ALLOWED_TAGS: ['i'],
           CUSTOM_ELEMENT_HANDLING: { tagNameCheck },
@@ -2142,6 +2144,116 @@
         'already-prefixed name left untouched'
       );
     });
+
+    QUnit.test('references move into the isolated namespace', (assert) => {
+      const cfg = { SANITIZE_NAMED_PROPS: true };
+
+      assert.equal(
+        DOMPurify.sanitize(
+          '<label for="field">Name</label><input id="field">',
+          cfg
+        ),
+        '<label for="user-content-field">Name</label>' +
+          '<input id="user-content-field">',
+        'label for points at the isolated input id'
+      );
+
+      assert.equal(
+        DOMPurify.sanitize(
+          '<span id="a">A</span><span id="b">B</span>' +
+            '<input aria-labelledby="a b" aria-describedby="b">',
+          cfg
+        ),
+        '<span id="user-content-a">A</span>' +
+          '<span id="user-content-b">B</span>' +
+          '<input aria-labelledby="user-content-a user-content-b" ' +
+          'aria-describedby="user-content-b">',
+        'ARIA IDREF lists keep pointing at the isolated ids'
+      );
+
+      assert.equal(
+        DOMPurify.sanitize(
+          '<input list="choices"><datalist id="choices"></datalist>',
+          cfg
+        ),
+        '<input list="user-content-choices">' +
+          '<datalist id="user-content-choices"></datalist>',
+        'list points at the isolated datalist id'
+      );
+
+      assert.equal(
+        DOMPurify.sanitize(
+          '<table><thead><tr><th id="h1"></th><th id="h2"></th></tr></thead>' +
+            '<tbody><tr><td headers="h1 h2"></td></tr></tbody></table>',
+          cfg
+        ),
+        '<table><thead><tr><th id="user-content-h1"></th>' +
+          '<th id="user-content-h2"></th></tr></thead>' +
+          '<tbody><tr><td headers="user-content-h1 user-content-h2"></td>' +
+          '</tr></tbody></table>',
+        'headers IDREF list keeps pointing at the isolated header ids'
+      );
+
+      assert.equal(
+        DOMPurify.sanitize('<img usemap="#m"><map name="m"></map>', cfg),
+        '<img usemap="#user-content-m">' + '<map name="user-content-m"></map>',
+        'usemap points at the isolated map name'
+      );
+
+      assert.equal(
+        DOMPurify.sanitize(
+          '<a href="#target">go</a><a name="target"></a>',
+          cfg
+        ),
+        '<a href="#user-content-target">go</a>' +
+          '<a name="user-content-target"></a>',
+        'in-page anchor points at the isolated anchor name'
+      );
+    });
+
+    QUnit.test('reference rewriting is idempotent', (assert) => {
+      const cfg = { SANITIZE_NAMED_PROPS: true };
+      const input =
+        '<label for="x">L</label><input id="x" list="l">' +
+        '<datalist id="l"></datalist><a href="#x">x</a>' +
+        '<span id="y"></span><input aria-describedby="x y">';
+      const once = DOMPurify.sanitize(input, cfg);
+
+      assert.equal(DOMPurify.sanitize(once, cfg), once);
+    });
+
+    QUnit.test(
+      'reference names are matched case-insensitively (XHTML)',
+      (assert) => {
+        const clean = DOMPurify.sanitize(
+          '<div xmlns="http://www.w3.org/1999/xhtml">' +
+            '<label FOR="x">L</label><input ID="x"/>' +
+            '<span ARIA-LABELLEDBY="x"></span></div>',
+          {
+            SANITIZE_NAMED_PROPS: true,
+            PARSER_MEDIA_TYPE: 'application/xhtml+xml',
+            ADD_ATTR: ['FOR', 'ID', 'ARIA-LABELLEDBY'],
+          }
+        );
+
+        assert.ok(
+          clean.includes('FOR="user-content-x"'),
+          'uppercase for is isolated: ' + clean
+        );
+        assert.ok(
+          clean.includes('ID="user-content-x"'),
+          'uppercase id is isolated: ' + clean
+        );
+        assert.ok(
+          clean.includes('ARIA-LABELLEDBY="user-content-x"'),
+          'uppercase aria reference is isolated: ' + clean
+        );
+        assert.notOk(
+          /(?:FOR|ID|ARIA-LABELLEDBY)="x"/.test(clean),
+          'no unisolated reference remains: ' + clean
+        );
+      }
+    );
 
     // =======================================================================
     // Config: WHOLE_DOCUMENT
