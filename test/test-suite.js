@@ -324,6 +324,60 @@
       );
     });
 
+    QUnit.test(
+      'forceKeepAttr cannot revive patch linkage in safe mode',
+      (assert) => {
+        const purify = DOMPurify(window);
+        purify.addHook('uponSanitizeAttribute', (node, hookEvent) => {
+          hookEvent.forceKeepAttr = true;
+        });
+        assert.equal(
+          purify.sanitize('<div patchsrc="//evil.example/p">x</div>', {
+            ADD_ATTR: ['patchsrc'],
+          }),
+          '<div>x</div>',
+          'patchsrc is a structural veto, not a force-keep candidate'
+        );
+        assert.equal(
+          purify.sanitize('<div for="account-panel">x</div>', {
+            ADD_ATTR: ['for'],
+          }),
+          '<div>x</div>',
+          'for is a structural veto outside label/output'
+        );
+        assert.equal(
+          purify.sanitize('<label for="email">Email</label>'),
+          '<label for="email">Email</label>',
+          'legitimate label[for] still survives'
+        );
+        assert.notOk(
+          purify.isValidAttribute('div', 'for', 'account-panel'),
+          'isValidAttribute agrees with sanitize()'
+        );
+        assert.ok(
+          purify.isValidAttribute('label', 'for', 'email'),
+          'isValidAttribute keeps legitimate label[for]'
+        );
+      }
+    );
+
+    QUnit.test(
+      'SAFE_FOR_XML=false remains the only patch-linkage escape hatch',
+      (assert) => {
+        const purify = DOMPurify(window);
+        purify.addHook('uponSanitizeAttribute', (node, hookEvent) => {
+          hookEvent.forceKeepAttr = true;
+        });
+        assert.equal(
+          purify.sanitize('<div patchsrc="//e">x</div>', {
+            ADD_ATTR: ['patchsrc'],
+            SAFE_FOR_XML: false,
+          }),
+          '<div patchsrc="//e">x</div>'
+        );
+      }
+    );
+
     QUnit.test('processing-instruction range markers are removed', (assert) => {
       const purify = DOMPurify(window);
       assert.equal(

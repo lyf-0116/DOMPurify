@@ -1598,7 +1598,8 @@ function createDOMPurify(window: WindowLike = getGlobal()): DOMPurify {
   /**
    * Patch-linkage attributes (declarative partial updates): `patchsrc`
    * always, `for` everywhere except on <label> and <output>. Gated on
-   * SAFE_FOR_XML. Shared by the IN_PLACE pre-pass and _isValidAttribute.
+   * SAFE_FOR_XML. Shared by the IN_PLACE pre-pass, the attribute walk and
+   * isValidAttribute().
    *
    * @param lcName the transformCaseFunc'd attribute name
    * @param lcTag the transformCaseFunc'd tag name of the carrying element
@@ -2376,15 +2377,6 @@ function createDOMPurify(window: WindowLike = getGlobal()): DOMPurify {
       return false;
     }
 
-    /* Patch-linkage attributes of declarative partial updates
-       (https://github.com/WICG/declarative-partial-updates). The patch itself
-       is applied at parse or connection time, so the walk already sees the
-       expanded tree. Dropping the linkage keeps it from expanding again in
-       the caller's context. */
-    if (_isPatchLinkageAttribute(lcName, lcTag)) {
-      return false;
-    }
-
     /* Make sure attribute cannot clobber */
     if (
       SANITIZE_DOM &&
@@ -2707,6 +2699,18 @@ function createDOMPurify(window: WindowLike = getGlobal()): DOMPurify {
       /* Value checks that apply regardless of hooks (comment / raw-text
          closers in the value, animated hrefs); see _isUnsafeAttributeValue. */
       if (_isUnsafeAttributeValue(name, value)) {
+        _removeAttribute(name, currentNode, attr);
+        continue;
+      }
+
+      /* Patch-linkage attributes of declarative partial updates
+         (https://github.com/WICG/declarative-partial-updates) are a structural
+         veto that hooks must not bypass: the patch itself is applied at parse
+         or connection time, so the walk already sees the expanded tree.
+         Dropping the linkage keeps it from expanding again in the caller's
+         context, and SAFE_FOR_XML=false is its only escape hatch. Keep this
+         ahead of forceKeepAttr, next to the value checks. */
+      if (_isPatchLinkageAttribute(lcName, lcTag)) {
         _removeAttribute(name, currentNode, attr);
         continue;
       }
@@ -3169,15 +3173,16 @@ function createDOMPurify(window: WindowLike = getGlobal()): DOMPurify {
     const lcTag = transformCaseFunc(tag);
     const lcName = transformCaseFunc(attr);
 
-    /* Apply the same value checks sanitize() applies to an attribute when no
-       hook intervenes, so a value approved here is one sanitize() would also
-       keep: comment / raw-text closers, animated hrefs, and the jQuery 3.0
-       self-closing-tag pattern. */
+    /* Apply the same non-bypassable checks sanitize() applies before a hook
+       can force-keep an attribute, so a value approved here is one sanitize()
+       would also keep: patch linkage, comment / raw-text closers, animated
+       hrefs, and the jQuery 3.0 self-closing-tag pattern. */
     if (
-      typeof value === 'string' &&
-      (_isUnsafeAttributeValue(attr, value) ||
-        (!ALLOW_SELF_CLOSE_IN_ATTR &&
-          regExpTest(EXPRESSIONS.SELF_CLOSING_TAG, value)))
+      _isPatchLinkageAttribute(lcName, lcTag) ||
+      (typeof value === 'string' &&
+        (_isUnsafeAttributeValue(attr, value) ||
+          (!ALLOW_SELF_CLOSE_IN_ATTR &&
+            regExpTest(EXPRESSIONS.SELF_CLOSING_TAG, value))))
     ) {
       return false;
     }

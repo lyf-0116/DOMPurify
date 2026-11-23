@@ -1804,7 +1804,8 @@ function createDOMPurify() {
 	/**
 	* Patch-linkage attributes (declarative partial updates): `patchsrc`
 	* always, `for` everywhere except on <label> and <output>. Gated on
-	* SAFE_FOR_XML. Shared by the IN_PLACE pre-pass and _isValidAttribute.
+	* SAFE_FOR_XML. Shared by the IN_PLACE pre-pass, the attribute walk and
+	* isValidAttribute().
 	*
 	* @param lcName the transformCaseFunc'd attribute name
 	* @param lcTag the transformCaseFunc'd tag name of the carrying element
@@ -2213,7 +2214,6 @@ function createDOMPurify() {
 	*/
 	const _isValidAttribute = function _isValidAttribute(lcTag, lcName, value) {
 		if (FORBID_ATTR[lcName]) return false;
-		if (_isPatchLinkageAttribute(lcName, lcTag)) return false;
 		if (SANITIZE_DOM && (lcName === "id" || lcName === "name") && (value in document || value in formElement)) return false;
 		const nameIsPermitted = ALLOWED_ATTR[lcName] || EXTRA_ELEMENT_HANDLING.attributeCheck instanceof Function && EXTRA_ELEMENT_HANDLING.attributeCheck(lcName, lcTag);
 		if (ALLOW_DATA_ATTR && regExpTest(DATA_ATTR$1, lcName)) return true;
@@ -2349,6 +2349,10 @@ function createDOMPurify() {
 				recreatedNamedProp = true;
 			}
 			if (_isUnsafeAttributeValue(name, value)) {
+				_removeAttribute(name, currentNode, attr);
+				continue;
+			}
+			if (_isPatchLinkageAttribute(lcName, lcTag)) {
 				_removeAttribute(name, currentNode, attr);
 				continue;
 			}
@@ -2579,7 +2583,7 @@ function createDOMPurify() {
 		if (!CONFIG) _parseConfig({});
 		const lcTag = transformCaseFunc(tag);
 		const lcName = transformCaseFunc(attr);
-		if (typeof value === "string" && (_isUnsafeAttributeValue(attr, value) || !ALLOW_SELF_CLOSE_IN_ATTR && regExpTest(SELF_CLOSING_TAG, value))) return false;
+		if (_isPatchLinkageAttribute(lcName, lcTag) || typeof value === "string" && (_isUnsafeAttributeValue(attr, value) || !ALLOW_SELF_CLOSE_IN_ATTR && regExpTest(SELF_CLOSING_TAG, value))) return false;
 		return _isValidAttribute(lcTag, lcName, value);
 	};
 	DOMPurify.addHook = function(entryPoint, hookFunction) {
