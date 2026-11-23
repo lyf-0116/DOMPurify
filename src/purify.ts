@@ -1318,15 +1318,29 @@ function createDOMPurify(window: WindowLike = getGlobal()): DOMPurify {
       return;
     }
 
+    const lcTag = keepAllowed ? transformCaseFunc(_readNodeName(element)) : '';
+
     for (let i = attributes.length - 1; i >= 0; --i) {
       const attribute = attributes[i];
       const name = attribute && attribute.name;
-      if (
-        typeof name === 'string' &&
-        !(keepAllowed && ALLOWED_ATTR[transformCaseFunc(name)])
-      ) {
-        _stripAttributeNode(element, attribute, name);
+      if (typeof name !== 'string') {
+        continue;
       }
+
+      /* The keep criterion is the walk's own _isValidAttribute, so a
+         discarded subtree follows the same rules as a sanitized one:
+         data-* / aria-* allowances apply, and a script-protocol URI on an
+         allowlisted name is stripped. Config-driven widening (ADD_ATTR,
+         CUSTOM_ELEMENT_HANDLING) applies; hook-driven widening cannot,
+         as no hook events fire on this path. */
+      if (
+        keepAllowed &&
+        _isValidAttribute(lcTag, transformCaseFunc(name), attribute.value)
+      ) {
+        continue;
+      }
+
+      _stripAttributeNode(element, attribute, name);
     }
   };
 

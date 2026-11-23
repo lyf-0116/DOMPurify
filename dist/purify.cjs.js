@@ -1619,10 +1619,13 @@ function createDOMPurify() {
 	const _stripAttributes = function _stripAttributes(element, keepAllowed) {
 		const attributes = getAttributes(element);
 		if (!attributes) return;
+		const lcTag = keepAllowed ? transformCaseFunc(_readNodeName(element)) : "";
 		for (let i = attributes.length - 1; i >= 0; --i) {
 			const attribute = attributes[i];
 			const name = attribute && attribute.name;
-			if (typeof name === "string" && !(keepAllowed && ALLOWED_ATTR[transformCaseFunc(name)])) _stripAttributeNode(element, attribute, name);
+			if (typeof name !== "string") continue;
+			if (keepAllowed && _isValidAttribute(lcTag, transformCaseFunc(name), attribute.value)) continue;
+			_stripAttributeNode(element, attribute, name);
 		}
 	};
 	/**

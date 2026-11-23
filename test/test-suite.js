@@ -9115,6 +9115,60 @@
     );
 
     /*
+     * The discard path used to keep or drop attributes by the raw ALLOWED_ATTR
+     * list only, diverging from the walk both ways: data-* / aria-* attributes
+     * the walk keeps were stripped, while an allowlisted name carrying an armed
+     * value (a javascript: href) survived. _stripAttributes now applies the
+     * walk's own _isValidAttribute, so a discarded subtree follows the same
+     * attribute rules as a sanitized one.
+     */
+    QUnit.test(
+      'IN_PLACE teardown applies the walk attribute rules on a discarded subtree',
+      (assert) => {
+        const root = document.createElement('div');
+        const wrap = document.createElement('section'); // dropped wholesale
+        const a = document.createElement('a');
+        a.setAttribute('href', 'javascript:alert(1)'); // allowlisted name, armed value
+        a.setAttribute('data-x', '1'); // the walk keeps it, the drop path must too
+        a.setAttribute('aria-label', 'kept'); // same
+        a.setAttribute('class', 'keep-me'); // allowlisted, callers rely on it
+        wrap.appendChild(a);
+        root.appendChild(wrap);
+        document.body.appendChild(root);
+
+        DOMPurify.sanitize(root, {
+          IN_PLACE: true,
+          FORBID_TAGS: ['section'],
+          KEEP_CONTENT: false, // force a wholesale subtree drop -> neutralize
+        });
+
+        assert.notOk(
+          a.hasAttribute('href'),
+          `javascript: href must not survive teardown - got: ${a
+            .getAttributeNames()
+            .join()}`
+        );
+        assert.strictEqual(
+          a.getAttribute('data-x'),
+          '1',
+          'data-* survives the drop path exactly as the walk keeps it'
+        );
+        assert.strictEqual(
+          a.getAttribute('aria-label'),
+          'kept',
+          'aria-* survives the drop path exactly as the walk keeps it'
+        );
+        assert.strictEqual(
+          a.getAttribute('class'),
+          'keep-me',
+          'allowlisted class survives the drop path'
+        );
+
+        document.body.removeChild(root);
+      }
+    );
+
+    /*
      * Rawtext/literal-text element carrying an element child breaks out on reparse.
      *
      * The HTML serializer emits the text children of style, script, xmp, iframe,
